@@ -102,11 +102,14 @@ export default function OperatorDashboard() {
       return
     }
 
-    // --- 1️⃣ Fetch hospital location from Supabase ---
+    // --- 1️⃣ Fetch hospital location from RPC ---
     type HospitalGeoJSON = {
       id: string
       name: string
-      location: string // ST_AsGeoJSON(location) returns a string
+      location: {
+        type: 'Point'
+        coordinates: [number, number] // [lng, lat]
+      }
     }
 
     const { data, error } = await supabase
@@ -114,6 +117,7 @@ export default function OperatorDashboard() {
       .single()
 
     if (error || !data) {
+      console.error(error)
       alert('Hospital location not found')
       return
     }
@@ -121,20 +125,15 @@ export default function OperatorDashboard() {
     const hospitalData = data as HospitalGeoJSON
 
     if (!hospitalData.location) {
-      alert('Hospital location is empty')
+      alert('Hospital location missing')
       return
     }
 
-    // --- 2️⃣ Parse GeoJSON string ---
-    const geo = JSON.parse(hospitalData.location) as {
-      type: string
-      coordinates: [number, number] // [lng, lat]
-    }
+    // ✅ NO JSON.parse here
+    const hospitalLng = hospitalData.location.coordinates[0]
+    const hospitalLat = hospitalData.location.coordinates[1]
 
-    const hospitalLng = geo.coordinates[0]
-    const hospitalLat = geo.coordinates[1]
-
-    // --- 3️⃣ Get ETA from Geoapify ---
+    // --- 2️⃣ Geoapify ETA ---
     const routingRes = await fetch(
       `https://api.geoapify.com/v1/routing?waypoints=${lat},${lng}|${hospitalLat},${hospitalLng}&mode=drive&apiKey=${process.env.NEXT_PUBLIC_GEOAPIFY_API_KEY}`
     )
@@ -143,7 +142,7 @@ export default function OperatorDashboard() {
     const etaSeconds = routingData.features?.[0]?.properties?.time ?? 0
     const etaMinutes = Math.ceil(etaSeconds / 60)
 
-    // --- 4️⃣ Create emergency ---
+    // --- 3️⃣ Create emergency ---
     await supabase.from('emergencies').insert({
       patient_location: `SRID=4326;POINT(${lng} ${lat})`,
       details,
@@ -153,7 +152,7 @@ export default function OperatorDashboard() {
       status: 'en_route',
     })
 
-    // --- 5️⃣ Update ambulance status ---
+    // --- 4️⃣ Update ambulance status ---
     await supabase
       .from('ambulances')
       .update({ status: 'on_call' })
